@@ -4,6 +4,9 @@
 #
 # Usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trusted/bootstrap/main/install.sh)"
+#
+# Set SETUP_REF to check out a specific branch of the setup repository instead
+# of its default branch.
 
 set -euo pipefail
 
@@ -14,6 +17,11 @@ set -euo pipefail
 REPO_HTTPS_URL="https://github.com/trusted/setup.git"
 REPO_NWO="trusted/setup"
 DEST_BASENAME="trusted-setup"
+
+# Which ref of $REPO_NWO to check out. Empty (the default) means whatever the
+# repository's own default branch is — normally main. Any committish works: a
+# branch, a tag or a raw commit.
+SETUP_REF="${SETUP_REF:-}"
 
 GH_APT_KEYRING="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
 GH_APT_KEY_URL="https://cli.github.com/packages/githubcli-archive-keyring.gpg"
@@ -399,6 +407,22 @@ resolve_data_home() {
     printf '%s' "$data_home"
 }
 
+# Check out $SETUP_REF. A branch that only exists on the remote is resolved by
+# git's usual DWIM into a local tracking branch; a tag or commit lands on a
+# detached HEAD. Requires the remote refs to already be fetched.
+checkout_setup_ref() {
+    local dest="$1" ref="$2"
+
+    if [ "$(git -C "$dest" rev-parse --abbrev-ref HEAD 2>/dev/null || printf '')" = "$ref" ]; then
+        ok "already on '$ref'"
+        return 0
+    fi
+
+    log "Checking out '$ref' (SETUP_REF)"
+    git -C "$dest" checkout "$ref" \
+        || die "'$ref' (from SETUP_REF) is not a branch, tag or commit in $REPO_NWO"
+}
+
 update_existing_clone() {
     local dest="$1" origin
     origin="$(git -C "$dest" remote get-url origin 2>/dev/null || printf '')"
@@ -420,9 +444,22 @@ update_existing_clone() {
             ;;
     esac
 
+    # Fetch before anything else: switching to a SETUP_REF that was pushed
+    # after this clone was made needs the remote refs to be up to date.
+    git -C "$dest" fetch --prune origin || warn "fetch failed"
+
     if ! git -C "$dest" diff --quiet || ! git -C "$dest" diff --cached --quiet; then
-        warn "local uncommitted changes in $dest; fetching but not merging"
-        git -C "$dest" fetch --prune origin || warn "fetch failed"
+        warn "local uncommitted changes in $dest; fetched but not switching or merging"
+        return 0
+    fi
+
+    if [ -n "$SETUP_REF" ]; then
+        checkout_setup_ref "$dest" "$SETUP_REF"
+    fi
+
+    # A detached HEAD — SETUP_REF pointed at a tag or a commit — has no
+    # upstream to fast-forward onto.
+    if [ "$(git -C "$dest" rev-parse --abbrev-ref HEAD)" = "HEAD" ]; then
         return 0
     fi
 
@@ -454,8 +491,14 @@ clone_repo() {
 
     mkdir -p "$parent"
     log "Cloning $REPO_NWO into $dest"
+    # A full clone (rather than `clone --branch`) so SETUP_REF may name a
+    # commit as well as a branch or tag.
     if ! git clone "$REPO_HTTPS_URL" "$dest"; then
         die "clone failed. Confirm your GitHub account has access to $REPO_NWO (try: gh repo view $REPO_NWO)."
+    fi
+
+    if [ -n "$SETUP_REF" ]; then
+        checkout_setup_ref "$dest" "$SETUP_REF"
     fi
 }
 
@@ -507,6 +550,10 @@ Usage:
   /bin/bash -c "\$(curl -fsSL https://some-host/install.sh)"
   ./install.sh [-h|--help]
 
+Environment:
+  SETUP_REF   branch, tag or commit of $REPO_NWO to check out. When unset or
+              empty, the repository's default branch is used.
+
 Supported: Ubuntu 24.04 LTS, Debian 13 (trixie), macOS.
 Requires GitHub credentials to already be available to gh, and sudo access
 (passwordless on Linux).
@@ -537,7 +584,7 @@ main() {
     printf '\n' >&2
     ok "$(git --version)"
     ok "$(gh --version | head -n 1)"
-    ok "$REPO_NWO checked out at $CLONE_DEST"
+    ok "$REPO_NWO checked out at $CLONE_DEST ($(git -C "$CLONE_DEST" rev-parse --abbrev-ref HEAD) @ $(git -C "$CLONE_DEST" rev-parse --short HEAD))"
 
     handoff_to_setup "$CLONE_DEST"
 }
