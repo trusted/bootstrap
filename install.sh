@@ -36,6 +36,24 @@ APT_LOCK_TIMEOUT=600
 # credential helper cannot answer we want a clear error instead of a hang.
 export GIT_TERMINAL_PROMPT=0
 
+# Homebrew must never stop to ask us anything. Since Homebrew 4.5, `brew
+# install`, `brew upgrade` and `brew reinstall` default to "ask mode": they
+# print the plan and then prompt for confirmation whenever it involves
+# dependencies, dependents or packages beyond the ones named. That prompt is
+# skipped when there is no TTY, but we deliberately keep the terminal so the
+# setup.sh handoff can use it, so we have to opt out explicitly.
+#
+# HOMEBREW_NO_ASK is what `brew bundle` sets on itself for the same reason. It
+# is preferred over `brew install --no-ask` because a pre-existing older
+# Homebrew would reject the unknown flag, while it ignores the variable
+# harmlessly (those versions never prompted in the first place).
+#
+# These are exported rather than set per command so that every brew invocation
+# inherits them, including taps and installs run by the setup.sh we exec into.
+# They are inert on Linux.
+export HOMEBREW_NO_ASK=1
+export HOMEBREW_NO_ENV_HINTS=1
+
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
