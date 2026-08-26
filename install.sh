@@ -16,7 +16,8 @@ set -euo pipefail
 
 REPO_HTTPS_URL="https://github.com/trusted/setup.git"
 REPO_NWO="trusted/setup"
-DEST_BASENAME="trusted-setup"
+# Where the checkout lands, relative to the data home resolved below.
+DEST_SUBPATH="consulting/trusted/setup"
 
 # Which ref of $REPO_NWO to check out. Empty (the default) means whatever the
 # repository's own default branch is — normally main. Any committish works: a
@@ -452,7 +453,7 @@ update_existing_clone() {
             ;;
     esac
 
-    log "$DEST_BASENAME is already cloned; updating"
+    log "$REPO_NWO is already cloned at $dest; updating"
     # Make sure an existing clone that was made over SSH starts using HTTPS.
     case "$origin" in
         https://github.com/*) ;;
@@ -489,7 +490,7 @@ update_existing_clone() {
 clone_repo() {
     local data_home dest parent
     data_home="$(resolve_data_home)"
-    dest="$data_home/$DEST_BASENAME"
+    dest="$data_home/$DEST_SUBPATH"
     parent="$(dirname "$dest")"
 
     CLONE_DEST="$dest"
@@ -561,7 +562,7 @@ CLONE_DEST=""
 usage() {
     cat <<EOF
 install.sh — install git and the GitHub CLI, point git's credential helper at
-gh, clone $REPO_NWO into \${XDG_DATA_HOME:-\$HOME/.local/share}/$DEST_BASENAME,
+gh, clone $REPO_NWO into \${XDG_DATA_HOME:-\$HOME/.local/share}/$DEST_SUBPATH,
 then exec the setup.sh from that checkout to continue the setup.
 
 Usage:
