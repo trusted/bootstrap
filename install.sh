@@ -371,21 +371,60 @@ install_macos() {
 # git + gh credential wiring
 # ---------------------------------------------------------------------------
 
-check_gh_auth() {
-    log "Checking GitHub authentication"
-    if gh auth status --hostname github.com >/dev/null 2>&1; then
-        ok "Authenticated to github.com"
-        return 0
+gh_is_authenticated() {
+    gh auth status >/dev/null 2>&1
+}
+
+# Run the interactive `gh auth login` web flow. gh needs a terminal for it: it
+# prints a one-time code (-c also copies it to the clipboard), waits for Enter
+# to open the browser, and then polls until the code is entered.
+gh_auth_login() {
+    log "Starting GitHub authentication"
+    printf '\n' >&2
+
+    if [ -t 0 ]; then
+        gh auth login --web --git-protocol https -c
+    elif (exec < /dev/tty) 2>/dev/null; then
+        # Piped stdin (curl | bash): borrow the controlling terminal so gh can
+        # still prompt. /dev/tty can exist as a path and still fail to open
+        # when the process has no controlling terminal, so it is opened as a
+        # test rather than checked with -e.
+        gh auth login --web --git-protocol https -c < /dev/tty
+    else
+        die "not authenticated to GitHub and no terminal is available to log in. Run 'gh auth login' (or export GH_TOKEN) and re-run this script."
     fi
-    printf '\n' >&2
-    gh auth status --hostname github.com >&2 || true
-    printf '\n' >&2
-    die "not authenticated to github.com. Run 'gh auth login' (or export GH_TOKEN) and re-run this script."
+}
+
+ensure_gh_auth() {
+    log "Checking GitHub authentication"
+
+    # A token in the environment takes precedence over anything `gh auth login`
+    # would write, so looping on the login flow could never fix it.
+    if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] && ! gh_is_authenticated; then
+        printf '\n' >&2
+        gh auth status >&2 || true
+        printf '\n' >&2
+        die "GH_TOKEN/GITHUB_TOKEN is set but not accepted. Fix or unset it and re-run this script."
+    fi
+
+    local attempt=1
+    local max_attempts=5
+    while ! gh_is_authenticated; do
+        if [ "$attempt" -gt "$max_attempts" ]; then
+            die "still not authenticated to GitHub after $max_attempts attempts; giving up"
+        fi
+        gh_auth_login || warn "'gh auth login' exited non-zero"
+        printf '\n' >&2
+        log "Re-checking GitHub authentication"
+        attempt=$((attempt + 1))
+    done
+
+    ok "Authenticated to GitHub"
 }
 
 configure_git_credentials() {
     log "Configuring git to use gh for github.com credentials"
-    gh auth setup-git --hostname github.com \
+    gh auth setup-git \
         || die "'gh auth setup-git' failed"
 
     local helper
@@ -574,8 +613,9 @@ Environment:
               empty, the repository's default branch is used.
 
 Supported: Ubuntu 24.04 LTS, Debian 13 (trixie), macOS.
-Requires GitHub credentials to already be available to gh, and sudo access
-(passwordless on Linux).
+If gh is not already authenticated it runs the interactive
+'gh auth login --web' flow, so a terminal is required unless GH_TOKEN is
+already set. Also requires sudo access (passwordless on Linux).
 EOF
 }
 
@@ -596,7 +636,7 @@ main() {
     have git || die "git is not on PATH after installation"
     have gh  || die "gh is not on PATH after installation"
 
-    check_gh_auth
+    ensure_gh_auth
     configure_git_credentials
     clone_repo
 
