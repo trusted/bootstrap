@@ -322,6 +322,34 @@ persist_brew_shellenv() {
     ok "Added Homebrew to PATH in $profile"
 }
 
+# Homebrew's installer runs its sudo pre-flight check as `sudo -n` whenever
+# NONINTERACTIVE is set, so that check can never prompt. On a machine that has
+# just booted there is no cached sudo timestamp yet, so it fails and the
+# installer aborts with "Need sudo access on macOS (e.g. the user ... needs to
+# be an Administrator)!" — even when the user is an administrator.
+#
+# Prime the timestamp ourselves first, with a `sudo` that is allowed to ask.
+# The installer's own privileged commands run without `-n`, so they re-prompt
+# on their own if the timestamp expires later in the run.
+prime_sudo() {
+    # Nothing to do when the timestamp is still within its grace period from an
+    # earlier run, or when sudo is passwordless here. `sudo -v` would be a
+    # harmless no-op in that case anyway, but checking first keeps us from
+    # announcing a password prompt that is never going to appear.
+    if sudo -n -v 2>/dev/null; then
+        return 0
+    fi
+
+    log "sudo will ask for your password"
+    # An `if` condition, not `sudo -v || die`, so that errexit does not fire
+    # before the diagnosis below is printed.
+    if sudo -v; then
+        return 0
+    fi
+    printf '\n' >&2
+    die "could not obtain sudo access, which the Homebrew installer requires. Check that $(whoami) is an administrator: System Settings > Users & Groups."
+}
+
 ensure_homebrew() {
     local brew_bin
     if have brew; then
@@ -337,10 +365,10 @@ ensure_homebrew() {
     fi
 
     log "Installing Homebrew (this also installs the Xcode Command Line Tools)"
-    log "sudo will ask for your password"
     if [ ! -t 0 ] && [ ! -e /dev/tty ]; then
-        warn "no terminal available; the Homebrew installer cannot prompt for your password"
+        warn "no terminal available; sudo cannot prompt for your password"
     fi
+    prime_sudo
     NONINTERACTIVE=1 /bin/bash -c \
         "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
         || die "Homebrew installation failed"
